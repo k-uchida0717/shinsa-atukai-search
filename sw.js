@@ -1,5 +1,5 @@
 // アプリ本体はキャッシュ優先、データは常にネットワーク優先（最新を取得し、圏外時のみキャッシュ）
-const CACHE = "atukai-v2";
+const CACHE = "atukai-v3";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {

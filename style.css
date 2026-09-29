@@ -101,3 +101,11 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
 .tag.no { background: none; border: 1px solid var(--line); color: var(--text); font-weight: 600; }
 .tag.src-ssk { background: var(--accent); color: var(--surface); }
 .tag.src-kk { background: var(--kk); color: var(--surface); }
+.tag.src-both { background: linear-gradient(90deg, var(--accent) 50%, var(--kk) 50%); color: var(--surface); }
+.tag.same { background: var(--kk-bg); color: var(--kk); font-weight: 600; }
+.tag.diff { background: var(--upd-bg); color: var(--upd); font-weight: 600; }
+.tag.also { background: none; border: 1px dashed var(--kk); color: var(--kk); }
+.card.pair { border-left: 4px solid var(--kk); }
+.df { background: var(--upd-bg); color: var(--upd); font-weight: 700; text-decoration: underline wavy; text-underline-offset: 3px; }
+.dfnote { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+.alt { font-size: 13px; color: var(--muted); margin: 10px 0 0; }

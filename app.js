@@ -84,57 +84,91 @@ async function load(src) {
   return (DATA[src] = d);
 }
 
+/* 支払基金と国保中央会で同じ事例の対応表（scripts/match_pairs.py が生成） */
+let PAIRS = null;
+async function loadPairs() {
+  if (PAIRS) return;
+  try {
+    const res = await fetch("data/pairs.json", { cache: "no-cache" });
+    PAIRS = res.ok ? await res.json() : { pairs: [] };
+  } catch (e) {
+    PAIRS = { pairs: [] }; // 対応表が無くても検索自体はできるようにする
+  }
+}
+/** 読み込み済みのデータに対応表を結び付ける（_pair: 対応情報, _partner: 相手の事例） */
+function linkPairs() {
+  if (!PAIRS) return;
+  const byId = {};
+  for (const s of Object.keys(DATA)) for (const it of DATA[s].items) byId[it.id] = it;
+  for (const p of PAIRS.pairs) {
+    const a = byId[p.ssk], b = byId[p.kk];
+    if (a) { a._pair = p; a._partner = b || null; }
+    if (b) { b._pair = p; b._partner = a || null; }
+  }
+}
+
 /* ---------- 検索 ---------- */
+function scoreItem(it, inc, exc, fields) {
+  const weight = { title: 12, rule: 4, basis: 1 };
+  let score = 0;
+  for (const alts of inc) {
+    let hit = 0;
+    for (const a of alts) {
+      if (it._src === "kokuho" && state.field !== "rule" && state.field !== "basis" && it._no === a) hit += 100; // 項番（D-390 等）
+      for (const f of fields) {
+        const n = it._ix[f].n;
+        let p = n.indexOf(a), c = 0;
+        while (p !== -1 && c < 5) { c++; p = n.indexOf(a, p + a.length); }
+        if (c) hit += weight[f] * (1 + Math.log2(c)) + (f === "title" && it._ix.title.n.startsWith(a) ? 6 : 0);
+      }
+    }
+    if (!hit) return -1;
+    score += hit;
+  }
+  if (exc.some((t) => fields.some((f) => it._ix[f].n.includes(t)))) return -1;
+  return score;
+}
+
 function search() {
   const srcs = activeSources().filter((s) => DATA[s]);
+  const merge = state.src === "both";
   const { inc, exc } = parseQuery(state.q);
   const fields = state.field === "all" ? FIELDS : [state.field];
-  const weight = { title: 12, rule: 4, basis: 1 };
   const base = [];
   for (const src of srcs) for (const it of DATA[src].items) {
+    // 「両方」では、対応する事例を支払基金側の 1 件にまとめる
+    const partner = merge && it._partner ? it._partner : null;
+    if (partner && src === "kokuho") continue;
     if (state.hideDeleted && it.status === "削除") continue;
-    if (!state.kokuho && src === "ssk" && it.src !== "支払基金") continue;
-    if (state.updatedOnly && !it.status) continue;
-    let score = 0, ok = true;
-    for (const alts of inc) {
-      let hit = 0;
-      for (const a of alts) {
-        if (src === "kokuho" && state.field !== "rule" && state.field !== "basis" && it._no === a) hit += 100; // 項番（D-390 等）
-        for (const f of fields) {
-          const n = it._ix[f].n;
-          let p = n.indexOf(a), c = 0;
-          while (p !== -1 && c < 5) { c++; p = n.indexOf(a, p + a.length); }
-          if (c) hit += weight[f] * (1 + Math.log2(c)) + (f === "title" && it._ix.title.n.startsWith(a) ? 6 : 0);
-        }
-      }
-      if (!hit) { ok = false; break; }
-      score += hit;
-    }
-    if (!ok) continue;
-    if (exc.some((t) => fields.some((f) => it._ix[f].n.includes(t)))) continue;
-    base.push({ it, score });
+    if (!partner && !state.kokuho && src === "ssk" && it.src !== "支払基金") continue;
+    if (state.updatedOnly && !it.status && !(partner && partner.status)) continue;
+    const score = Math.max(scoreItem(it, inc, exc, fields), partner ? scoreItem(partner, inc, exc, fields) : -1);
+    if (score < 0) continue;
+    const date = partner && (partner.date || "") > (it.date || "") ? partner.date : it.date;
+    base.push({ it, partner, score, date: date || "" });
   }
   // 区分ごとの件数（区分で絞る前）
   const counts = {};
   for (const r of base) counts[r.it.kubun] = (counts[r.it.kubun] || 0) + 1;
   renderCats(counts, base.length);
 
-  results = state.cat ? base.filter((r) => r.it.kubun === state.cat) : base;
+  results = state.cat ? base.filter((r) => r.it.kubun === state.cat || (r.partner && r.partner.kubun === state.cat)) : base;
   const sort = state.sort === "rel" && !inc.length ? "new" : state.sort;
-  const byNew = (a, b) => (b.it.date || "").localeCompare(a.it.date || "") || a.it._order - b.it._order;
+  const byNew = (a, b) => b.date.localeCompare(a.date) || a.it._order - b.it._order;
   results.sort({
     rel: (a, b) => b.score - a.score || byNew(a, b),
     new: byNew,
-    old: (a, b) => (a.it.date || "").localeCompare(b.it.date || "") || a.it._order - b.it._order,
+    old: (a, b) => a.date.localeCompare(b.date) || a.it._order - b.it._order,
     no: (a, b) => a.it._order - b.it._order,
   }[sort]);
+  results.merged = results.filter((r) => r.partner).length;
   results.terms = inc.flat();
   shown = 0;
   $("list").innerHTML = "";
   renderMore();
   const q = state.q.trim();
   $("count").textContent = results.length
-    ? `${results.length}件${q ? `（「${q}」）` : ""}${!inc.length && state.sort === "rel" ? " ・公表日が新しい順" : ""}`
+    ? `${results.length}件${q ? `（「${q}」）` : ""}${results.merged ? `・うち支払基金と国保の共通事例 ${results.merged}件をまとめて表示` : ""}${!inc.length && state.sort === "rel" ? "・公表日が新しい順" : ""}`
     : "";
   if (!results.length) $("list").innerHTML = `<li class="empty">該当する事例がありません。<br>別の表記（一般名・商品名・区分番号など）でもお試しください。</li>`;
   $("help").hidden = !!q;
@@ -165,15 +199,57 @@ function ranges(ix, terms) {
   }
   return m;
 }
-function highlight(str, ix, terms, from = 0, to = str.length) {
-  let out = "", pos = from;
-  for (const [a, b] of ranges(ix, terms)) {
-    if (b <= from || a >= to) continue;
-    const s = Math.max(a, from), e = Math.min(b, to);
-    out += esc(str.slice(pos, s)) + "<mark>" + esc(str.slice(s, e)) + "</mark>";
-    pos = e;
+/** 検索語を <mark>、diffs（文言差の範囲）を <span class="df"> で囲んで HTML にする */
+function highlight(str, ix, terms, from = 0, to = str.length, diffs = []) {
+  const flag = new Uint8Array(to - from);
+  const paint = (rs, bit) => {
+    for (const [a, b] of rs) for (let i = Math.max(a, from); i < Math.min(b, to); i++) flag[i - from] |= bit;
+  };
+  paint(ranges(ix, terms), 1);
+  paint(diffs, 2);
+  let out = "";
+  for (let i = 0; i < flag.length;) {
+    let j = i;
+    while (j < flag.length && flag[j] === flag[i]) j++;
+    let seg = esc(str.slice(from + i, from + j));
+    if (flag[i] & 1) seg = `<mark>${seg}</mark>`;
+    if (flag[i] & 2) seg = `<span class="df">${seg}</span>`;
+    out += seg;
+    i = j;
   }
-  return out + esc(str.slice(pos, to));
+  return out;
+}
+
+/** 2 つの文章の違う部分（空白・全角半角・ハイフン類の違いは無視）を、それぞれの元の位置で返す */
+function diffRanges(a, b) {
+  const pick = (s) => {
+    const cs = [], pos = [];
+    for (let i = 0; i < s.length; i++) {
+      const c = normChar(s[i]).replace(/[ー一]/g, "-");
+      if (c) { cs.push(c); pos.push(i); }
+    }
+    return { cs, pos };
+  };
+  const A = pick(a), B = pick(b), n = A.cs.length, m = B.cs.length;
+  if (n * m > 6e6) return [[], []];
+  const w = m + 1, L = new Uint16Array((n + 1) * w); // 最長共通部分列
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    L[i * w + j] = A.cs[i] === B.cs[j] ? L[(i + 1) * w + j + 1] + 1 : Math.max(L[(i + 1) * w + j], L[i * w + j + 1]);
+  const ka = new Uint8Array(n), kb = new Uint8Array(m);
+  for (let i = 0, j = 0; i < n && j < m;) {
+    if (A.cs[i] === B.cs[j]) { ka[i++] = 1; kb[j++] = 1; }
+    else if (L[(i + 1) * w + j] >= L[i * w + j + 1]) i++;
+    else j++;
+  }
+  const toRanges = (keep, P) => {
+    const r = [];
+    for (let i = 0; i < keep.length; i++) if (!keep[i]) {
+      const s = P.pos[i];
+      if (r.length && r[r.length - 1][1] >= s) r[r.length - 1][1] = s + 1; else r.push([s, s + 1]);
+    }
+    return r;
+  };
+  return [toRanges(ka, A), toRanges(kb, B)];
 }
 function snippet(it, terms) {
   const hitIn = (f) => terms.length && ranges(it._ix[f], terms).length;
@@ -206,6 +282,10 @@ function card(it, terms) {
   if (kk) tags.push(`<span class="tag no">${esc(it.no)}</span>`);
   if (!kk && it.src !== "支払基金") tags.push(`<span class="tag kk">国保中央会合意</span>`);
   if (it.status) tags.push(`<span class="tag ${it.status === "削除" ? "del" : "upd"}">${it.status} ${esc(it.statusDate)}</span>`);
+  if (it._pair) { // 片方だけ表示しているときも、もう一方に同じ事例があることを示す
+    const other = kk ? `支払基金 №${it._pair.sskNo}` : `国保 ${it._pair.kkNo}`;
+    tags.push(`<span class="tag also">${esc(other)}${it._pair.rule === "same" ? "と同一" : "と共通（文言差あり）"}</span>`);
+  }
   tags.push(`<span class="tag plain">${esc([it.kai, fmtDate(it.date)].filter(Boolean).join("・"))}</span>`);
   li.querySelector(".tags").innerHTML = tags.join("");
   li.querySelector(".title").innerHTML = highlight(it.title, it._ix.title, terms);
@@ -236,9 +316,59 @@ function card(it, terms) {
   });
   return li;
 }
+/** 支払基金と国保中央会の共通事例を 1 枚にまとめたカード（a: 支払基金, b: 国保中央会） */
+function pairCard(a, b, terms) {
+  const p = a._pair;
+  const li = $("tpl").content.firstElementChild.cloneNode(true);
+  li.classList.add("pair");
+  const tags = [`<span class="tag src-both">支払基金・国保 共通</span>`, `<span class="tag">${esc(a.kubun)}</span>`,
+    `<span class="tag no">№${esc(a.no)}</span>`, `<span class="tag no">${esc(b.no)}</span>`,
+    p.rule === "same" ? `<span class="tag same">取扱い同一</span>` : `<span class="tag diff">文言差あり</span>`];
+  for (const [label, it] of [["支払基金", a], ["国保", b]])
+    if (it.status) tags.push(`<span class="tag upd">${label} ${it.status} ${esc(it.statusDate)}</span>`);
+  li.querySelector(".tags").innerHTML = tags.join("");
+  li.querySelector(".title").innerHTML = highlight(a.title, a._ix.title, terms);
+  const hit = (it) => terms.length && (ranges(it._ix.rule, terms).length || ranges(it._ix.basis, terms).length);
+  li.querySelector(".snippet").innerHTML = snippet(hit(a) || !hit(b) ? a : b, terms);
+
+  const head = li.querySelector(".head"), body = li.querySelector(".body");
+  head.addEventListener("click", () => {
+    const open = body.hidden;
+    if (open && !body.dataset.filled) {
+      const sec = (h, html) => `<h3>${h}</h3><div class="txt">${html}</div>`;
+      let html = "";
+      if (normalize(a.title) !== normalize(b.title))
+        html += `<p class="alt">国保中央会での題名：${highlight(b.title, b._ix.title, terms)}</p>`;
+      if (p.rule === "same") {
+        html += sec("取扱い（支払基金・国保 共通）", highlight(a.rule, a._ix.rule, terms));
+      } else {
+        const [da, db] = diffRanges(a.rule, b.rule);
+        html += `<p class="dfnote"><span class="df">色付き</span>の部分が両者で異なる箇所です。</p>`;
+        html += sec("取扱い（支払基金）", highlight(a.rule, a._ix.rule, terms, 0, a.rule.length, da));
+        html += sec("取扱い（国保中央会）", highlight(b.rule, b._ix.rule, terms, 0, b.rule.length, db));
+      }
+      if (p.basis === "same" && a.basis) {
+        html += sec("根拠等（支払基金・国保 共通）", highlight(a.basis, a._ix.basis, terms));
+      } else {
+        if (a.basis) html += sec("取扱いを作成した根拠等（支払基金）", highlight(a.basis, a._ix.basis, terms));
+        if (b.basis) html += sec("取扱いの根拠・留意事項等（国保中央会）", highlight(b.basis, b._ix.basis, terms));
+      }
+      const sskLink = a.src === "支払基金" ? SOURCES.ssk.page : "https://www.kokuho.or.jp/inspect/jirei/";
+      html += `<p class="foot">支払基金 №${esc(a.no)}・公表 ${esc(fmtDate(a.date))}${a.kai ? `（${esc(a.kai)}）` : ""}　<a href="${sskLink}" target="_blank" rel="noopener">公式ページ ↗</a><br>` +
+        `国保中央会 ${esc(b.no)}・掲載 ${esc(fmtDate(b.date))}　${b.pdf ? `<a href="${esc(b.pdf)}" target="_blank" rel="noopener">公式PDF ↗</a>` : ""}</p>`;
+      body.innerHTML = html;
+      body.dataset.filled = "1";
+    }
+    body.hidden = !open;
+    li.querySelector(".snippet").hidden = open;
+    head.setAttribute("aria-expanded", String(open));
+  });
+  return li;
+}
+
 function renderMore() {
   const frag = document.createDocumentFragment();
-  for (const r of results.slice(shown, shown + PAGE)) frag.appendChild(card(r.it, results.terms));
+  for (const r of results.slice(shown, shown + PAGE)) frag.appendChild(r.partner ? pairCard(r.it, r.partner, results.terms) : card(r.it, results.terms));
   $("list").appendChild(frag);
   shown = Math.min(results.length, shown + PAGE);
   $("more").hidden = shown >= results.length;
@@ -294,14 +424,15 @@ function fromHash() {
 async function refresh() {
   toHash();
   const need = activeSources().filter((s) => !DATA[s]);
-  if (need.length) {
+  if (need.length || !PAIRS) {
     $("meta").textContent = "読み込み中…";
     try {
-      await Promise.all(need.map(load));
+      await Promise.all([...need.map(load), loadPairs()]);
     } catch (e) {
       $("meta").textContent = "データを読み込めませんでした。通信状態を確認してください。";
       return;
     }
+    linkPairs();
   }
   renderMeta();
   search();
@@ -361,5 +492,6 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible" || Date.now() - loadedAt < 60 * 60 * 1000) return;
   loadedAt = Date.now();
   for (const k of Object.keys(DATA)) delete DATA[k];
+  PAIRS = null;
   refresh();
 });

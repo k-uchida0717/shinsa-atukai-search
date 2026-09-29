@@ -13,6 +13,7 @@
 |---|---|
 | `scripts/update_data.py` | [公式ページ](https://www.ssk.or.jp/shinryohoshu/sinsa_jirei/kikin_shinsa_atukai/shinsa_atukai_i/index.html)から一覧Excel（本体＋国保中央会合意分）のリンクをたどって取得し、`data/atukai.json` を生成 |
 | `scripts/update_kokuho.py` | [国保中央会の医科ページ](https://www.kokuho.or.jp/inspect/jirei/ika/index.html)の一覧表（項番・タイトル・取扱い・掲載日）と一括PDF（根拠・留意事項）を突き合わせて `data/kokuho.json` を生成。一覧ページに変化がなければ何もしない |
+| `scripts/match_pairs.py` | 支払基金と国保中央会で同じ事例を突き合わせて `data/pairs.json` を生成（「両方」表示で 1 件にまとめる。文言が異なる組は両方の文言を並べ、違う箇所を色付け） |
 | `.github/workflows/update-data.yml` | 毎日 06:00 JST に上記を実行し、変更があれば自動コミット → GitHub Pages に反映 |
 | `index.html` / `app.js` / `style.css` | 検索画面 |
 | `sw.js` / `manifest.webmanifest` | ホーム画面追加・オフライン閲覧 |

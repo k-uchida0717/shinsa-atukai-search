@@ -32,6 +32,8 @@ jobs:
         env:
           FORCE: ${{ inputs.force && '1' || '' }}
         run: python scripts/update_kokuho.py
+      - name: 支払基金と国保の共通事例を突き合わせ（まとめ表示用）
+        run: python scripts/match_pairs.py
       - name: 変更があればコミット
         run: |
           if git diff --quiet -- data/; then
