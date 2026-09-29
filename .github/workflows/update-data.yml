@@ -1,8 +1,8 @@
-name: 支払基金データ自動更新
+name: 支払基金・国保データ自動更新
 
 on:
   schedule:
-    - cron: "0 21 * * *"   # 毎日 06:00 JST（支払基金は概ね月末に公表）
+    - cron: "0 21 * * *"   # 毎日 06:00 JST
   workflow_dispatch:        # 手動実行も可能
 
 permissions:
@@ -16,9 +16,15 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install openpyxl==3.1.5
-      - name: 公開Excelを取得して整合性チェック・JSON生成
+      - run: pip install -r requirements.txt
+      - name: 支払基金（公開Excel → 整合性チェック → JSON）
+        id: ssk
+        continue-on-error: true
         run: python scripts/update_data.py
+      - name: 国保中央会（一覧HTML＋PDF → 整合性チェック → JSON）
+        id: kokuho
+        continue-on-error: true
+        run: python scripts/update_kokuho.py
       - name: 変更があればコミット
         run: |
           if git diff --quiet -- data/; then
@@ -27,6 +33,11 @@ jobs:
             git config user.name  "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add data/
-            git commit -m "データ更新: $(python -c "import json;d=json.load(open('data/atukai.json',encoding='utf-8'));print(d['asOf'], d['latestKai'], str(d['count'])+'件')")"
+            git commit -m "データ自動更新 $(date -u -d '+9 hours' '+%Y-%m-%d')"
             git push
           fi
+      - name: 取得・整合性チェックに失敗した場合はジョブを失敗にする（メール通知用）
+        if: steps.ssk.outcome == 'failure' || steps.kokuho.outcome == 'failure'
+        run: |
+          echo "支払基金: ${{ steps.ssk.outcome }} / 国保中央会: ${{ steps.kokuho.outcome }}"
+          exit 1

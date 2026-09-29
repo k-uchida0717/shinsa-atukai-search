@@ -91,3 +91,13 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
 .opts summary::-webkit-details-marker { display: none; }
 .opts summary::before { content: "▸ "; }
 .opts[open] summary::before { content: "▾ "; }
+.seg { display: flex; margin-top: 8px; border: 1.5px solid var(--accent); border-radius: 10px; overflow: hidden; }
+.seg button {
+  flex: 1; padding: 7px 4px; font-size: 14px; font-weight: 600; border: 0; background: var(--surface);
+  color: var(--accent); cursor: pointer;
+}
+.seg button + button { border-left: 1.5px solid var(--accent); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--surface); }
+.tag.no { background: none; border: 1px solid var(--line); color: var(--text); font-weight: 600; }
+.tag.src-ssk { background: var(--accent); color: var(--surface); }
+.tag.src-kk { background: var(--kk); color: var(--surface); }

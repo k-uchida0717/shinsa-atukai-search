@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>審査取扱い検索</title>
-<meta name="description" content="支払基金「審査の一般的な取扱い（医科）」を検査名・薬剤名・手術名・病名などで検索">
+<meta name="description" content="支払基金「審査の一般的な取扱い（医科）」と国保中央会「審査情報提供事例（医科）」を検査名・薬剤名・手術名・病名などで検索">
 <meta name="theme-color" content="#0f5c8c">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
@@ -18,6 +18,11 @@
   <div class="brand">
     <h1>審査取扱い検索 <small>医科</small></h1>
     <p id="meta" class="meta">読み込み中…</p>
+  </div>
+  <div id="srcSwitch" class="seg" role="group" aria-label="出典の切替">
+    <button type="button" data-src="ssk" aria-pressed="true">支払基金</button>
+    <button type="button" data-src="kokuho" aria-pressed="false">国保中央会</button>
+    <button type="button" data-src="both" aria-pressed="false">両方</button>
   </div>
   <div class="searchbox">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 2a8 8 0 0 1 6.32 12.9l5.39 5.4-1.42 1.4-5.39-5.38A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/></svg>
@@ -44,7 +49,7 @@
   </div>
   <div class="toggles">
     <label><input type="checkbox" id="hideDeleted" checked> 削除済みを除く</label>
-    <label><input type="checkbox" id="kokuho" checked> 国保中央会合意分を含む</label>
+    <label id="kokuhoToggle"><input type="checkbox" id="kokuho" checked> 支払基金一覧の国保合意分を含む</label>
     <label><input type="checkbox" id="updatedOnly"> 更新・削除のみ</label>
   </div>
   </details>
@@ -57,12 +62,13 @@
   <section id="help" class="help">
     <h2>使い方</h2>
     <ul>
-      <li>検査名・薬剤名（一般名/商品名）・手術名・処置名・注射名・病名・区分番号（例: <code>D007</code>, <code>K046</code>）で全文検索できます。</li>
+      <li>上のボタンで <b>支払基金／国保中央会／両方</b> を切り替えられます。</li>
+      <li>検査名・薬剤名（一般名/商品名）・手術名・処置名・注射名・病名・区分番号（例: <code>D007</code>, <code>K046</code>）、国保の項番（例: <code>D-390</code>）で全文検索できます。</li>
       <li>スペース区切りで <b>AND 検索</b>、<code>-語</code> で除外、<code>A|B</code> で OR 検索。</li>
       <li>全角/半角・ひらがな/カタカナ・大文字/小文字の違いは区別しません。</li>
-      <li>ホーム画面に追加するとアプリとして使え、オフラインでも閲覧できます。</li>
+      <li>ホーム画面に追加するとアプリとして使え、オフラインでも閲覧できます。データとアプリは公開元の更新に合わせて自動で新しくなります。</li>
     </ul>
-    <p class="note">出典: 社会保険診療報酬支払基金「支払基金における審査の一般的な取扱い（医科）」一覧（Excel）。本アプリは非公式です。最終的な判断は必ず<a id="srcLink" href="https://www.ssk.or.jp/shinryohoshu/sinsa_jirei/kikin_shinsa_atukai/shinsa_atukai_i/index.html" target="_blank" rel="noopener">公式ページ</a>で確認してください。</p>
+    <p class="note">出典: <span id="srcNote"></span>。本アプリは非公式です。最終的な判断は必ず公式ページ・公式PDFで確認してください。</p>
   </section>
 </main>
 

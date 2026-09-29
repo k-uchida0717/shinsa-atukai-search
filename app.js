@@ -1,23 +1,31 @@
 "use strict";
 
+const SOURCES = {
+  ssk: { file: "data/atukai.json", label: "支払基金", name: "支払基金における審査の一般的な取扱い（医科）",
+    page: "https://www.ssk.or.jp/shinryohoshu/sinsa_jirei/kikin_shinsa_atukai/shinsa_atukai_i/index.html" },
+  kokuho: { file: "data/kokuho.json", label: "国保中央会", name: "国民健康保険中央会 審査情報提供事例（医科）",
+    page: "https://www.kokuho.or.jp/inspect/jirei/ika/index.html" },
+};
 const CAT_ORDER = ["初・再診料", "入院料等", "医学管理等", "在宅医療", "検査", "画像診断", "投薬", "注射",
-  "リハビリテーション", "精神科専門療法", "処置", "手術", "麻酔", "放射線療法", "病理診断", "その他", "食事"];
+  "リハビリテーション", "精神科専門療法", "処置", "手術", "麻酔", "放射線療法", "放射線治療", "病理診断", "その他", "食事"];
 const FIELDS = ["title", "rule", "basis"];
 const PAGE = 40;
 const $ = (id) => document.getElementById(id);
 
-let DATA = null;
+const DATA = {};          // src -> 読み込んだ JSON
 let results = [];
 let shown = 0;
-const state = { q: "", field: "all", sort: "rel", cat: "", hideDeleted: true, kokuho: true, updatedOnly: false };
+const state = { src: "ssk", q: "", field: "all", sort: "rel", cat: "", hideDeleted: true, kokuho: true, updatedOnly: false };
 
-/* ---------- 正規化：全角半角・大文字小文字・かなカナ・空白・かぎ括弧の違いを吸収 ---------- */
+/* ---------- 正規化：全角半角・大文字小文字・かなカナ・ハイフン類・空白・かぎ括弧の違いを吸収 ---------- */
 const DROP = /[\s「」『』]/;
+const DASH = /[‐-―−⁻₋﹣－]/;
 function normChar(c) {
-  let s = c.normalize("NFKC").toLowerCase();
+  const s = c.normalize("NFKC").toLowerCase();
   let out = "";
   for (const ch of s) {
     if (DROP.test(ch)) continue;
+    if (DASH.test(ch)) { out += "-"; continue; }
     const code = ch.charCodeAt(0);
     // カタカナ → ひらがな
     out += code >= 0x30a1 && code <= 0x30f6 ? String.fromCharCode(code - 0x60) : ch;
@@ -59,22 +67,41 @@ function parseQuery(q) {
   return { inc, exc };
 }
 
+/* ---------- データ読み込み ---------- */
+const activeSources = () => (state.src === "both" ? ["ssk", "kokuho"] : [state.src]);
+
+async function load(src) {
+  if (DATA[src]) return DATA[src];
+  const res = await fetch(SOURCES[src].file, { cache: "no-cache" });
+  if (!res.ok) throw new Error(res.status);
+  const d = await res.json();
+  d.items.forEach((it, i) => {
+    it._src = src;
+    it._order = (src === "ssk" ? 0 : 100000) + i;
+    it._no = normalize(it.no || "");
+    it._ix = Object.fromEntries(FIELDS.map((f) => [f, indexText(it[f] || "")]));
+  });
+  return (DATA[src] = d);
+}
+
 /* ---------- 検索 ---------- */
 function search() {
+  const srcs = activeSources().filter((s) => DATA[s]);
   const { inc, exc } = parseQuery(state.q);
   const fields = state.field === "all" ? FIELDS : [state.field];
   const weight = { title: 12, rule: 4, basis: 1 };
   const base = [];
-  for (const it of DATA.items) {
+  for (const src of srcs) for (const it of DATA[src].items) {
     if (state.hideDeleted && it.status === "削除") continue;
-    if (!state.kokuho && it.src !== "支払基金") continue;
+    if (!state.kokuho && src === "ssk" && it.src !== "支払基金") continue;
     if (state.updatedOnly && !it.status) continue;
     let score = 0, ok = true;
     for (const alts of inc) {
       let hit = 0;
-      for (const f of fields) {
-        const n = it._ix[f].n;
-        for (const a of alts) {
+      for (const a of alts) {
+        if (src === "kokuho" && state.field !== "rule" && state.field !== "basis" && it._no === a) hit += 100; // 項番（D-390 等）
+        for (const f of fields) {
+          const n = it._ix[f].n;
           let p = n.indexOf(a), c = 0;
           while (p !== -1 && c < 5) { c++; p = n.indexOf(a, p + a.length); }
           if (c) hit += weight[f] * (1 + Math.log2(c)) + (f === "title" && it._ix.title.n.startsWith(a) ? 6 : 0);
@@ -102,10 +129,6 @@ function search() {
     no: (a, b) => a.it._order - b.it._order,
   }[sort]);
   results.terms = inc.flat();
-  const opt = (id) => $(id).selectedOptions[0].textContent.replace(/（.*）/, "");
-  $("optsSum").textContent = "検索条件：" + [opt("field"), opt("sort"),
-    state.hideDeleted ? "削除済み除く" : "削除済み含む", !state.kokuho && "国保分除く", state.updatedOnly && "更新・削除のみ"]
-    .filter(Boolean).join("・");
   shown = 0;
   $("list").innerHTML = "";
   renderMore();
@@ -115,10 +138,15 @@ function search() {
     : "";
   if (!results.length) $("list").innerHTML = `<li class="empty">該当する事例がありません。<br>別の表記（一般名・商品名・区分番号など）でもお試しください。</li>`;
   $("help").hidden = !!q;
+
+  const opt = (id) => $(id).selectedOptions[0].textContent.replace(/（.*）/, "");
+  $("optsSum").textContent = "検索条件：" + [opt("field"), opt("sort"),
+    state.hideDeleted ? "削除済み除く" : "削除済み含む", !state.kokuho && state.src !== "kokuho" && "国保合意分除く", state.updatedOnly && "更新・削除のみ"]
+    .filter(Boolean).join("・");
 }
 
 /* ---------- 描画 ---------- */
-const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 function ranges(ix, terms) {
   const r = [];
@@ -148,15 +176,16 @@ function highlight(str, ix, terms, from = 0, to = str.length) {
   return out + esc(str.slice(pos, to));
 }
 function snippet(it, terms) {
+  const hitIn = (f) => terms.length && ranges(it._ix[f], terms).length;
+  const fallback = !hitIn("rule") && !hitIn("basis"); // 題名・項番だけに一致したときは取扱いの冒頭を表示
   for (const f of ["rule", "basis"]) {
     const ix = it._ix[f];
     const rg = terms.length ? ranges(ix, terms) : [];
-    if (rg.length || (!terms.length && f === "rule")) {
-      const text = it[f].replace(/\n/g, " ");
+    if (rg.length || (fallback && f === "rule")) {
+      const text = it[f].replace(/\n/g, " "); // 改行→空白は同じ長さなので対応表をそのまま使える
       const at = rg.length ? rg[0][0] : 0;
       const from = Math.max(0, at - 30), to = Math.min(text.length, at + 90);
-      const ixFlat = { n: ix.n, map: ix.map }; // 改行→空白は同じ長さなので対応表をそのまま使える
-      return (from ? "…" : "") + highlight(text, ixFlat, terms, from, to) + (to < text.length ? "…" : "");
+      return (from ? "…" : "") + highlight(text, ix, terms, from, to) + (to < text.length ? "…" : "");
     }
   }
   return "";
@@ -170,8 +199,12 @@ function fmtDate(d) {
 function card(it, terms) {
   const li = $("tpl").content.firstElementChild.cloneNode(true);
   if (it.status === "削除") li.classList.add("deleted");
-  const tags = [`<span class="tag">${esc(it.kubun)}</span>`];
-  if (it.src !== "支払基金") tags.push(`<span class="tag kk">国保中央会合意</span>`);
+  const kk = it._src === "kokuho";
+  const tags = [];
+  if (state.src === "both") tags.push(`<span class="tag ${kk ? "src-kk" : "src-ssk"}">${kk ? "国保中央会" : "支払基金"}</span>`);
+  tags.push(`<span class="tag">${esc(it.kubun)}</span>`);
+  if (kk) tags.push(`<span class="tag no">${esc(it.no)}</span>`);
+  if (!kk && it.src !== "支払基金") tags.push(`<span class="tag kk">国保中央会合意</span>`);
   if (it.status) tags.push(`<span class="tag ${it.status === "削除" ? "del" : "upd"}">${it.status} ${esc(it.statusDate)}</span>`);
   tags.push(`<span class="tag plain">${esc([it.kai, fmtDate(it.date)].filter(Boolean).join("・"))}</span>`);
   li.querySelector(".tags").innerHTML = tags.join("");
@@ -182,11 +215,19 @@ function card(it, terms) {
     const open = body.hidden;
     if (open && !body.dataset.filled) {
       li.querySelector(".rule").innerHTML = highlight(it.rule, it._ix.rule, terms);
-      if (it.basis) li.querySelector(".basis").innerHTML = highlight(it.basis, it._ix.basis, terms);
-      else { li.querySelector(".basisH").remove(); li.querySelector(".basis").remove(); }
-      const src = it.src === "支払基金" ? DATA.source : "https://www.kokuho.or.jp/inspect/jirei/";
-      li.querySelector(".foot").innerHTML =
-        `${esc(it.src)} №${esc(it.no)}${it.kubunNo ? `（区分No.${esc(it.kubunNo)}）` : ""}・公表 ${esc(fmtDate(it.date))}${it.kai ? `（${esc(it.kai)}）` : ""}<br><a href="${src}" target="_blank" rel="noopener">公式ページで確認 ↗</a>`;
+      if (it.basis) {
+        li.querySelector(".basisH").textContent = kk ? "取扱いの根拠・留意事項等" : "取扱いを作成した根拠等";
+        li.querySelector(".basis").innerHTML = highlight(it.basis, it._ix.basis, terms);
+      } else { li.querySelector(".basisH").remove(); li.querySelector(".basis").remove(); }
+      let foot, link;
+      if (kk) {
+        foot = `国保中央会 審査情報提供事例 ${esc(it.no)}・掲載 ${esc(fmtDate(it.date))}`;
+        link = it.pdf ? `<a href="${esc(it.pdf)}" target="_blank" rel="noopener">公式PDFで確認 ↗</a>` : "";
+      } else {
+        foot = `${esc(it.src)} №${esc(it.no)}${it.kubunNo ? `（区分No.${esc(it.kubunNo)}）` : ""}・公表 ${esc(fmtDate(it.date))}${it.kai ? `（${esc(it.kai)}）` : ""}`;
+        link = `<a href="${it.src === "支払基金" ? SOURCES.ssk.page : "https://www.kokuho.or.jp/inspect/jirei/"}" target="_blank" rel="noopener">公式ページで確認 ↗</a>`;
+      }
+      li.querySelector(".foot").innerHTML = `${foot}<br>${link}`;
       body.dataset.filled = "1";
     }
     body.hidden = !open;
@@ -213,10 +254,24 @@ function renderCats(counts, total) {
     .map(([v, label, n]) => `<button class="chip" type="button" data-cat="${esc(v)}" aria-pressed="${state.cat === v}">${esc(label)}<small>${n}</small></button>`)
     .join("");
 }
+function renderMeta() {
+  const lines = activeSources().filter((s) => DATA[s]).map((s) => {
+    const d = DATA[s];
+    const latest = s === "ssk" ? `最新 ${d.latestKai}（${fmtDate(d.latestDate)}公表）` : "";
+    return `${state.src === "both" ? SOURCES[s].label + "：" : ""}${d.asOf || ""}・全${d.count}件${latest ? "・" + latest : ""}`;
+  });
+  $("meta").textContent = lines.join(" ／ ");
+  for (const b of document.querySelectorAll("#srcSwitch button")) b.setAttribute("aria-pressed", String(b.dataset.src === state.src));
+  $("kokuhoToggle").hidden = state.src === "kokuho";
+  $("srcNote").innerHTML = activeSources()
+    .map((s) => `<a href="${SOURCES[s].page}" target="_blank" rel="noopener">${esc(SOURCES[s].name)}</a>`).join("、");
+  document.title = `審査取扱い検索（${state.src === "both" ? "支払基金＋国保" : SOURCES[state.src].label}）`;
+}
 
 /* ---------- URL との同期（共有・戻る操作用） ---------- */
 function toHash() {
   const p = new URLSearchParams();
+  if (state.src !== "ssk") p.set("s", state.src);
   if (state.q) p.set("q", state.q);
   if (state.cat) p.set("cat", state.cat);
   if (state.field !== "all") p.set("f", state.field);
@@ -224,6 +279,10 @@ function toHash() {
 }
 function fromHash() {
   const p = new URLSearchParams(location.hash.slice(1));
+  let saved = null;
+  try { saved = localStorage.getItem("src"); } catch (e) { /* 保存不可の環境 */ }
+  const s = p.get("s") || saved || "ssk";
+  state.src = s in SOURCES || s === "both" ? s : "ssk";
   state.q = p.get("q") || "";
   state.cat = p.get("cat") || "";
   state.field = p.get("f") || "all";
@@ -232,43 +291,75 @@ function fromHash() {
   $("clear").hidden = !state.q;
 }
 
-let timer;
-function update() { toHash(); search(); }
-
-async function init() {
-  fromHash();
-  try {
-    const res = await fetch("data/atukai.json", { cache: "no-cache" });
-    DATA = await res.json();
-  } catch (e) {
-    $("meta").textContent = "データを読み込めませんでした。通信状態を確認してください。";
-    return;
+async function refresh() {
+  toHash();
+  const need = activeSources().filter((s) => !DATA[s]);
+  if (need.length) {
+    $("meta").textContent = "読み込み中…";
+    try {
+      await Promise.all(need.map(load));
+    } catch (e) {
+      $("meta").textContent = "データを読み込めませんでした。通信状態を確認してください。";
+      return;
+    }
   }
-  DATA.items.forEach((it, i) => {
-    it._order = i;
-    it._ix = Object.fromEntries(FIELDS.map((f) => [f, indexText(it[f] || "")]));
-  });
-  $("meta").textContent = `${DATA.asOf || ""}・全${DATA.count}件・最新 ${DATA.latestKai}（${fmtDate(DATA.latestDate)}公表）`;
+  renderMeta();
+  search();
+}
 
+let timer;
+function init() {
+  fromHash();
   $("q").addEventListener("input", () => {
     state.q = $("q").value;
     $("clear").hidden = !state.q;
     clearTimeout(timer);
-    timer = setTimeout(update, 150);
+    timer = setTimeout(refresh, 150);
   });
-  $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.target.blur(); } });
-  $("clear").addEventListener("click", () => { $("q").value = state.q = ""; $("clear").hidden = true; update(); $("q").focus(); });
-  $("field").addEventListener("change", (e) => { state.field = e.target.value; update(); });
-  $("sort").addEventListener("change", (e) => { state.sort = e.target.value; update(); });
-  for (const k of ["hideDeleted", "kokuho", "updatedOnly"]) $(k).addEventListener("change", (e) => { state[k] = e.target.checked; update(); });
+  $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
+  $("clear").addEventListener("click", () => { $("q").value = state.q = ""; $("clear").hidden = true; refresh(); $("q").focus(); });
+  $("field").addEventListener("change", (e) => { state.field = e.target.value; refresh(); });
+  $("sort").addEventListener("change", (e) => { state.sort = e.target.value; refresh(); });
+  for (const k of ["hideDeleted", "kokuho", "updatedOnly"]) $(k).addEventListener("change", (e) => { state[k] = e.target.checked; refresh(); });
+  $("srcSwitch").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b || b.dataset.src === state.src) return;
+    state.src = b.dataset.src;
+    state.cat = "";
+    try { localStorage.setItem("src", state.src); } catch (err) { /* 保存不可の環境 */ }
+    refresh();
+  });
   $("cats").addEventListener("click", (e) => {
     const b = e.target.closest(".chip");
-    if (b) { state.cat = b.dataset.cat; update(); }
+    if (b) { state.cat = b.dataset.cat; refresh(); }
   });
   $("more").addEventListener("click", renderMore);
-  window.addEventListener("hashchange", () => { fromHash(); search(); });
-  search();
+  window.addEventListener("hashchange", () => { fromHash(); refresh(); });
+  refresh();
 }
 
 init();
-if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js");
+
+/* ---------- アプリ本体の自動更新：新しい版が公開されたら自動で切り替える ---------- */
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  const hadController = !!navigator.serviceWorker.controller; // 初回インストール時は再読み込みしない
+  navigator.serviceWorker.register("sw.js").then((reg) => {
+    setInterval(() => reg.update(), 60 * 60 * 1000);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reg.update(); });
+  });
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloaded || !hadController) return;
+    reloaded = true;
+    location.reload();
+  });
+}
+
+/* ---------- データの自動更新：開きっぱなしでも、画面に戻ったとき 1 時間以上経っていれば再取得 ---------- */
+let loadedAt = Date.now();
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || Date.now() - loadedAt < 60 * 60 * 1000) return;
+  loadedAt = Date.now();
+  for (const k of Object.keys(DATA)) delete DATA[k];
+  refresh();
+});
