@@ -1,0 +1,32 @@
+name: 支払基金データ自動更新
+
+on:
+  schedule:
+    - cron: "0 21 * * *"   # 毎日 06:00 JST（支払基金は概ね月末に公表）
+  workflow_dispatch:        # 手動実行も可能
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install openpyxl==3.1.5
+      - name: 公開Excelを取得して整合性チェック・JSON生成
+        run: python scripts/update_data.py
+      - name: 変更があればコミット
+        run: |
+          if git diff --quiet -- data/; then
+            echo "データに変更なし"
+          else
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data/
+            git commit -m "データ更新: $(python -c "import json;d=json.load(open('data/atukai.json',encoding='utf-8'));print(d['asOf'], d['latestKai'], str(d['count'])+'件')")"
+            git push
+          fi

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>審査取扱い検索</title>
+<meta name="description" content="支払基金「審査の一般的な取扱い（医科）」を検査名・薬剤名・手術名・病名などで検索">
+<meta name="theme-color" content="#0f5c8c">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="審査取扱い">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>審査取扱い検索 <small>医科</small></h1>
+    <p id="meta" class="meta">読み込み中…</p>
+  </div>
+  <div class="searchbox">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 2a8 8 0 0 1 6.32 12.9l5.39 5.4-1.42 1.4-5.39-5.38A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/></svg>
+    <input id="q" type="search" enterkeyhint="search" autocomplete="off"
+      placeholder="例: フェリチン　K046　骨折　ビタミンB12" aria-label="キーワード">
+    <button id="clear" type="button" aria-label="クリア" hidden>×</button>
+  </div>
+  <div id="cats" class="cats" role="group" aria-label="区分"></div>
+  <details class="opts" id="opts">
+  <summary id="optsSum">検索条件</summary>
+  <div class="controls">
+    <select id="field" aria-label="検索対象">
+      <option value="all">全文（タイトル・取扱い・根拠）</option>
+      <option value="title">タイトルのみ</option>
+      <option value="rule">取扱いのみ</option>
+      <option value="basis">根拠のみ</option>
+    </select>
+    <select id="sort" aria-label="並び順">
+      <option value="rel">関連度順</option>
+      <option value="new">公表日が新しい順</option>
+      <option value="old">公表日が古い順</option>
+      <option value="no">№順</option>
+    </select>
+  </div>
+  <div class="toggles">
+    <label><input type="checkbox" id="hideDeleted" checked> 削除済みを除く</label>
+    <label><input type="checkbox" id="kokuho" checked> 国保中央会合意分を含む</label>
+    <label><input type="checkbox" id="updatedOnly"> 更新・削除のみ</label>
+  </div>
+  </details>
+</header>
+
+<main>
+  <p id="count" class="count" aria-live="polite"></p>
+  <ol id="list" class="list"></ol>
+  <button id="more" class="more" type="button" hidden>さらに表示</button>
+  <section id="help" class="help">
+    <h2>使い方</h2>
+    <ul>
+      <li>検査名・薬剤名（一般名/商品名）・手術名・処置名・注射名・病名・区分番号（例: <code>D007</code>, <code>K046</code>）で全文検索できます。</li>
+      <li>スペース区切りで <b>AND 検索</b>、<code>-語</code> で除外、<code>A|B</code> で OR 検索。</li>
+      <li>全角/半角・ひらがな/カタカナ・大文字/小文字の違いは区別しません。</li>
+      <li>ホーム画面に追加するとアプリとして使え、オフラインでも閲覧できます。</li>
+    </ul>
+    <p class="note">出典: 社会保険診療報酬支払基金「支払基金における審査の一般的な取扱い（医科）」一覧（Excel）。本アプリは非公式です。最終的な判断は必ず<a id="srcLink" href="https://www.ssk.or.jp/shinryohoshu/sinsa_jirei/kikin_shinsa_atukai/shinsa_atukai_i/index.html" target="_blank" rel="noopener">公式ページ</a>で確認してください。</p>
+  </section>
+</main>
+
+<template id="tpl">
+  <li class="card">
+    <button class="head" type="button" aria-expanded="false">
+      <span class="tags"></span>
+      <span class="title"></span>
+      <span class="snippet"></span>
+    </button>
+    <div class="body" hidden>
+      <h3>取扱い</h3><div class="rule txt"></div>
+      <h3 class="basisH">取扱いを作成した根拠等</h3><div class="basis txt"></div>
+      <p class="foot"></p>
+    </div>
+  </li>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>
