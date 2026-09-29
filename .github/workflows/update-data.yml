@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "0 21 * * *"   # 毎日 06:00 JST
   workflow_dispatch:        # 手動実行も可能
+    inputs:
+      force:
+        description: "変更がなくても国保データを取り込み直す"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -24,6 +29,8 @@ jobs:
       - name: 国保中央会（一覧HTML＋PDF → 整合性チェック → JSON）
         id: kokuho
         continue-on-error: true
+        env:
+          FORCE: ${{ inputs.force && '1' || '' }}
         run: python scripts/update_kokuho.py
       - name: 変更があればコミット
         run: |
